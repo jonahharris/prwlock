@@ -273,30 +273,31 @@ main (
 #endif /* USE_LIBUV_RWLOCK */
 
   for (int ii = 0; ii < NUM_THREADS; ++ii) {
+#ifdef USE_LIBUV_RWLOCK
+    uv_thread_cb thread_callback = random_reader_thread;
+#else
+    void *(*thread_callback) (void *) = random_reader_thread;
+#endif /* USE_LIBUV_RWLOCK */
+
     memset(&thread_context[ii], 0, sizeof(prwlock_thread_context_t));
     thread_context[ii].input.rwlock = rwlock;
     thread_context[ii].input.iteration_count = NUM_ITERATIONS;
     thread_context[ii].input.sleep_in_microseconds = 1;
     thread_context[ii].input.mcg64_seed = (ii + 1);
 
-    if (0 == (ii % 2)) {
-#ifdef USE_LIBUV_RWLOCK
-      uv_thread_create(&threads[ii], random_reader_thread,
-        &thread_context[ii]);
-#else
-      pthread_create(&threads[ii], NULL, random_reader_thread,
-        &thread_context[ii]);
-#endif /* USE_LIBUV_RWLOCK */
-    } else {
+    /* We'll make writes take 2x */
+    if (1 == (ii % 2)) {
+      thread_callback = random_writer_thread;
       thread_context[ii].input.sleep_in_microseconds *= 2;
-#ifdef USE_LIBUV_RWLOCK
-      uv_thread_create(&threads[ii], random_writer_thread,
-        &thread_context[ii]);
-#else
-      pthread_create(&threads[ii], NULL, random_writer_thread,
-        &thread_context[ii]);
-#endif /* USE_LIBUV_RWLOCK */
     }
+
+#ifdef USE_LIBUV_RWLOCK
+    uv_thread_create(&threads[ii], thread_callback,
+      &thread_context[ii]);
+#else
+    pthread_create(&threads[ii], NULL, thread_callback,
+      &thread_context[ii]);
+#endif /* USE_LIBUV_RWLOCK */
   }
 
   for (int ii = 0; ii < NUM_THREADS; ++ii) {
@@ -305,13 +306,9 @@ main (
 #else
     int rc = pthread_join(threads[ii], NULL);
 #endif /* USE_LIBUV_RWLOCK */
-    if (0 == (ii % 2)) {
-      printf("reader thread encountered %"PRIu64" waits\n",
-        thread_context[ii].output.wait_count);
-    } else {
-      printf("writer thread encountered %"PRIu64" waits\n",
-        thread_context[ii].output.wait_count);
-    }
+    printf("%s thread encountered %"PRIu64" waits\n",
+      (0 == (ii % 2)) ? "reader" : "writer",
+      thread_context[ii].output.wait_count);
   }
 
   partitioned_rwlock_destroy(rwlock);
