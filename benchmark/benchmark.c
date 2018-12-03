@@ -183,7 +183,8 @@ random_reader_thread (
 
   for (int ii = 0; ii < NUM_ITERATIONS; ++ii) {
     random_id =
-      ((164603309694725029ull * random_id) % 14738995463583502973ull);
+      ((UINT64_C(164603309694725029) * random_id)
+        % UINT64_C(14738995463583502973));
     HASH_JEN(&random_id, sizeof(random_id), hash_value);
     hash_bucket = ((hash_value) & ((bucket_count) - 1U));
     if (0 != partitioned_rwlock_tryrdlock(rwlock, hash_bucket)) {
