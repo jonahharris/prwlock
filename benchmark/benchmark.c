@@ -189,7 +189,7 @@ random_reader_thread (
   unsigned hash_value = 0;
   unsigned hash_bucket = 0;
 
-  for (int ii = 0; ii < NUM_ITERATIONS; ++ii) {
+  for (int ii = 0; ii < context->input.iteration_count; ++ii) {
     random_id =
       ((UINT64_C(164603309694725029) * random_id)
         % UINT64_C(14738995463583502973));
@@ -236,7 +236,7 @@ random_writer_thread (
   unsigned hash_value = 0;
   unsigned hash_bucket = 0;
 
-  for (int ii = 0; ii < NUM_ITERATIONS; ++ii) {
+  for (int ii = 0; ii < context->input.iteration_count; ++ii) {
     random_id =
       ((UINT64_C(164603309694725029) * random_id)
         % UINT64_C(14738995463583502973));
