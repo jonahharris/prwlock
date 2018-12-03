@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-I../
+CFLAGS=-Wall -O3 -I../
 
 all: ptbenchmark uvbenchmark
 

@@ -53,69 +53,76 @@
 #endif /* NUM_THREADS */
 
 #ifndef NUM_PARTITIONS
-# define NUM_PARTITIONS         512
+# define NUM_PARTITIONS         1024
 #endif /* NUM_PARTITIONS */
 
 #ifndef NUM_ITERATIONS
 # define NUM_ITERATIONS         1E6
 #endif /* NUM_ITERATIONS */
 
+#ifndef NUM_MICROSECONDS
+# define NUM_MICROSECONDS       1
+#endif /* NUM_MICROSECONDS */
+
 /* ========================================================================= */
 /* -- MACROS --------------------------------------------------------------- */
 /* ========================================================================= */
 
 #define HASH_JEN_MIX(a,b,c)                                                   \
-do {                                                                          \
-  a -= b; a -= c; a ^= ( c >> 13 );                                           \
-  b -= c; b -= a; b ^= ( a << 8 );                                            \
-  c -= a; c -= b; c ^= ( b >> 13 );                                           \
-  a -= b; a -= c; a ^= ( c >> 12 );                                           \
-  b -= c; b -= a; b ^= ( a << 16 );                                           \
-  c -= a; c -= b; c ^= ( b >> 5 );                                            \
-  a -= b; a -= c; a ^= ( c >> 3 );                                            \
-  b -= c; b -= a; b ^= ( a << 10 );                                           \
-  c -= a; c -= b; c ^= ( b >> 15 );                                           \
-} while (0)
+  do {                                                                        \
+    a -= b; a -= c; a ^= ( c >> 13 );                                         \
+    b -= c; b -= a; b ^= ( a << 8 );                                          \
+    c -= a; c -= b; c ^= ( b >> 13 );                                         \
+    a -= b; a -= c; a ^= ( c >> 12 );                                         \
+    b -= c; b -= a; b ^= ( a << 16 );                                         \
+    c -= a; c -= b; c ^= ( b >> 5 );                                          \
+    a -= b; a -= c; a ^= ( c >> 3 );                                          \
+    b -= c; b -= a; b ^= ( a << 10 );                                         \
+    c -= a; c -= b; c ^= ( b >> 15 );                                         \
+  } while (0)
 
 #define HASH_JEN(key,keylen,hashv)                                            \
-do {                                                                          \
-  unsigned _hj_i,_hj_j,_hj_k;                                                 \
-  unsigned const char *_hj_key=(unsigned const char*)(key);                   \
-  hashv = 0xfeedbeefu;                                                        \
-  _hj_i = _hj_j = 0x9e3779b9u;                                                \
-  _hj_k = (unsigned)(keylen);                                                 \
-  while (_hj_k >= 12U) {                                                      \
-    _hj_i +=    (_hj_key[0] + ( (unsigned)_hj_key[1] << 8 )                   \
-        + ( (unsigned)_hj_key[2] << 16 )                                      \
-        + ( (unsigned)_hj_key[3] << 24 ) );                                   \
-    _hj_j +=    (_hj_key[4] + ( (unsigned)_hj_key[5] << 8 )                   \
-        + ( (unsigned)_hj_key[6] << 16 )                                      \
-        + ( (unsigned)_hj_key[7] << 24 ) );                                   \
-    hashv += (_hj_key[8] + ( (unsigned)_hj_key[9] << 8 )                      \
-        + ( (unsigned)_hj_key[10] << 16 )                                     \
-        + ( (unsigned)_hj_key[11] << 24 ) );                                  \
+  do {                                                                        \
+    unsigned _hj_i,_hj_j,_hj_k;                                               \
+    unsigned const char *_hj_key=(unsigned const char *)(key);                \
+    hashv = 0xfeedbeefu;                                                      \
+    _hj_i = _hj_j = 0x9e3779b9u;                                              \
+    _hj_k = (unsigned)(keylen);                                               \
+    while (_hj_k >= 12U) {                                                    \
+      _hj_i += (_hj_key[0]                                                    \
+          + ((unsigned)_hj_key[1] << 8)                                       \
+          + ((unsigned)_hj_key[2] << 16)                                      \
+          + ((unsigned)_hj_key[3] << 24));                                    \
+      _hj_j += (_hj_key[4]                                                    \
+          + ((unsigned)_hj_key[5] << 8)                                       \
+          + ((unsigned)_hj_key[6] << 16)                                      \
+          + ((unsigned)_hj_key[7] << 24));                                    \
+      hashv += (_hj_key[8]                                                    \
+          + ((unsigned)_hj_key[9] << 8)                                       \
+          + ((unsigned)_hj_key[10] << 16)                                     \
+          + ((unsigned)_hj_key[11] << 24));                                   \
                                                                               \
-     HASH_JEN_MIX(_hj_i, _hj_j, hashv);                                       \
+       HASH_JEN_MIX(_hj_i, _hj_j, hashv);                                     \
                                                                               \
-     _hj_key += 12;                                                           \
-     _hj_k -= 12U;                                                            \
-  }                                                                           \
-  hashv += (unsigned)(keylen);                                                \
-  switch ( _hj_k ) {                                                          \
-    case 11: hashv += ( (unsigned)_hj_key[10] << 24 ); /* FALLTHROUGH */      \
-    case 10: hashv += ( (unsigned)_hj_key[9] << 16 );  /* FALLTHROUGH */      \
-    case 9:  hashv += ( (unsigned)_hj_key[8] << 8 );   /* FALLTHROUGH */      \
-    case 8:  _hj_j += ( (unsigned)_hj_key[7] << 24 );  /* FALLTHROUGH */      \
-    case 7:  _hj_j += ( (unsigned)_hj_key[6] << 16 );  /* FALLTHROUGH */      \
-    case 6:  _hj_j += ( (unsigned)_hj_key[5] << 8 );   /* FALLTHROUGH */      \
-    case 5:  _hj_j += _hj_key[4];                      /* FALLTHROUGH */      \
-    case 4:  _hj_i += ( (unsigned)_hj_key[3] << 24 );  /* FALLTHROUGH */      \
-    case 3:  _hj_i += ( (unsigned)_hj_key[2] << 16 );  /* FALLTHROUGH */      \
-    case 2:  _hj_i += ( (unsigned)_hj_key[1] << 8 );   /* FALLTHROUGH */      \
-    case 1:  _hj_i += _hj_key[0];                                             \
-  }                                                                           \
-  HASH_JEN_MIX(_hj_i, _hj_j, hashv);                                          \
-} while (0)
+       _hj_key += 12;                                                         \
+       _hj_k -= 12U;                                                          \
+    }                                                                         \
+    hashv += (unsigned)(keylen);                                              \
+    switch (_hj_k) {                                                          \
+      case 11: hashv += ((unsigned)_hj_key[10] << 24); /* FALLTHROUGH */      \
+      case 10: hashv += ((unsigned)_hj_key[9] << 16);  /* FALLTHROUGH */      \
+      case 9:  hashv += ((unsigned)_hj_key[8] << 8);   /* FALLTHROUGH */      \
+      case 8:  _hj_j += ((unsigned)_hj_key[7] << 24);  /* FALLTHROUGH */      \
+      case 7:  _hj_j += ((unsigned)_hj_key[6] << 16);  /* FALLTHROUGH */      \
+      case 6:  _hj_j += ((unsigned)_hj_key[5] << 8);   /* FALLTHROUGH */      \
+      case 5:  _hj_j += _hj_key[4];                    /* FALLTHROUGH */      \
+      case 4:  _hj_i += ((unsigned)_hj_key[3] << 24);  /* FALLTHROUGH */      \
+      case 3:  _hj_i += ((unsigned)_hj_key[2] << 16);  /* FALLTHROUGH */      \
+      case 2:  _hj_i += ((unsigned)_hj_key[1] << 8);   /* FALLTHROUGH */      \
+      case 1:  _hj_i += _hj_key[0];                                           \
+    }                                                                         \
+    HASH_JEN_MIX(_hj_i, _hj_j, hashv);                                        \
+  } while (0)
 
 /* ========================================================================= */
 /* -- PRIVATE TYPES -------------------------------------------------------- */
@@ -135,7 +142,7 @@ typedef struct {
 typedef struct {
   prwlock_sample_thread_input_t   input;
   prwlock_sample_thread_output_t  output;
-} prwlock_thread_context_t;
+} prwlock_sample_thread_context_t;
 
 /* ========================================================================= */
 /* -- PRIVATE METHOD PROTOTYPES -------------------------------------------- */
@@ -173,7 +180,8 @@ void *
 random_reader_thread (
   void                         *arg
 ) {
-  prwlock_thread_context_t *context = (prwlock_thread_context_t *) arg;
+  prwlock_sample_thread_context_t *context =
+    (prwlock_sample_thread_context_t *) arg;
   partitioned_rwlock_t *rwlock = context->input.rwlock;
   size_t bucket_count = partitioned_rwlock_get_partition_count(rwlock);
   uint64_t random_id = context->input.mcg64_seed;
@@ -219,7 +227,8 @@ void *
 random_writer_thread (
   void                         *arg
 ) {
-  prwlock_thread_context_t *context = (prwlock_thread_context_t *) arg;
+  prwlock_sample_thread_context_t *context =
+    (prwlock_sample_thread_context_t *) arg;
   partitioned_rwlock_t *rwlock = context->input.rwlock;
   size_t bucket_count = partitioned_rwlock_get_partition_count(rwlock);
   uint64_t random_id = context->input.mcg64_seed;
@@ -229,7 +238,8 @@ random_writer_thread (
 
   for (int ii = 0; ii < NUM_ITERATIONS; ++ii) {
     random_id =
-      ((164603309694725029ull * random_id) % 14738995463583502973ull);
+      ((UINT64_C(164603309694725029) * random_id)
+        % UINT64_C(14738995463583502973));
     HASH_JEN(&random_id, sizeof(random_id), hash_value);
     hash_bucket = ((hash_value) & ((bucket_count) - 1U));
     if (0 != partitioned_rwlock_trywrlock(rwlock, hash_bucket)) {
@@ -266,7 +276,7 @@ main (
   partitioned_rwlock_t *rwlock;
   partitioned_rwlock_init(&rwlock, NUM_PARTITIONS);
 
-  prwlock_thread_context_t thread_context[NUM_THREADS];
+  prwlock_sample_thread_context_t thread_context[NUM_THREADS];
 #ifdef USE_LIBUV_RWLOCK
   uv_thread_t threads[NUM_THREADS];
 #else
@@ -280,15 +290,16 @@ main (
     void *(*thread_callback) (void *) = random_reader_thread;
 #endif /* USE_LIBUV_RWLOCK */
 
-    memset(&thread_context[ii], 0, sizeof(prwlock_thread_context_t));
+    memset(&thread_context[ii], 0, sizeof(prwlock_sample_thread_context_t));
     thread_context[ii].input.rwlock = rwlock;
     thread_context[ii].input.iteration_count = NUM_ITERATIONS;
-    thread_context[ii].input.sleep_in_microseconds = 1;
+    thread_context[ii].input.sleep_in_microseconds = NUM_MICROSECONDS;
     thread_context[ii].input.mcg64_seed = (ii + 1);
 
-    /* We'll make writes take 2x */
     if (1 == (ii % 2)) {
       thread_callback = random_writer_thread;
+
+      /* We'll make writes take 2x */
       thread_context[ii].input.sleep_in_microseconds *= 2;
     }
 
@@ -296,16 +307,16 @@ main (
     uv_thread_create(&threads[ii], thread_callback,
       &thread_context[ii]);
 #else
-    pthread_create(&threads[ii], NULL, thread_callback,
+    (void) pthread_create(&threads[ii], NULL, thread_callback,
       &thread_context[ii]);
 #endif /* USE_LIBUV_RWLOCK */
   }
 
   for (int ii = 0; ii < NUM_THREADS; ++ii) {
 #ifdef USE_LIBUV_RWLOCK
-    int rc = uv_thread_join(&threads[ii]);
+    (void) uv_thread_join(&threads[ii]);
 #else
-    int rc = pthread_join(threads[ii], NULL);
+    (void) pthread_join(threads[ii], NULL);
 #endif /* USE_LIBUV_RWLOCK */
     printf("%s thread encountered %"PRIu64" waits\n",
       (0 == (ii % 2)) ? "reader" : "writer",

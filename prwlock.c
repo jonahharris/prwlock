@@ -207,7 +207,7 @@ partitioned_rwlock_trywrlock (
 #ifdef USE_LIBUV_RWLOCK
   int rc = uv_rwlock_trywrlock(&(rwlock->partitions[partition]));
   if (0 == rc) {
-    rwlock->lock_type_held[partition] = PRWLOCK_TYPE_READ;
+    rwlock->lock_type_held[partition] = PRWLOCK_TYPE_WRITE;
   }
   return rc;
 #else
