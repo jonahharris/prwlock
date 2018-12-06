@@ -33,8 +33,10 @@
 /* ========================================================================= */
 
 #include <stdlib.h>
-#ifdef USE_LIBUV_RWLOCK
+#if defined(USE_LIBUV_RWLOCK)
 # include <uv.h>
+#elif defined(USE_ATOMICS) 
+# include <stdatomic.h>
 #else
 # include <pthread.h>
 #endif /* USE_LIBUV_RWLOCK */
