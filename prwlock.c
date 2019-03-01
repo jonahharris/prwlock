@@ -41,6 +41,8 @@
 /* -- DEFINITIONS ---------------------------------------------------------- */
 /* ========================================================================= */
 
+#define CACHE_LINE_SIZE         64
+
 /* ========================================================================= */
 /* -- MACROS --------------------------------------------------------------- */
 /* ========================================================================= */
@@ -51,22 +53,32 @@
 
 #if defined(USE_LIBUV_RWLOCK) || defined(USE_ATOMICS)
 typedef enum {
+  PRWLOCK_TYPE_NONE,
   PRWLOCK_TYPE_READ,
   PRWLOCK_TYPE_WRITE
 } prwlock_type_t;
 #endif /* USE_LIBUV_RWLOCK */
 
+typedef struct {
+#if defined(USE_LIBUV_RWLOCK)
+  uv_rwlock_t                   rwlock;
+  prwlock_type_t                lock_type_held;
+  char                          cache_line_padding[56
+                                  - sizeof(prwlock_type_t)];
+#elif defined(USE_ATOMICS) 
+  _Atomic int32_t               rwlock;
+  prwlock_type_t                lock_type_held;
+  char                          cache_line_padding[CACHE_LINE_SIZE
+                                  - sizeof(int32_t) - sizeof(prwlock_type_t)];
+#else /* pthreads */
+  pthread_rwlock_t              rwlock;
+  char                          cache_line_padding[56];
+#endif /* USE_LIBUV_RWLOCK */
+} partitioned_rwlock_cell_t;
+
 struct partitioned_rwlock_t {
   size_t                        partition_count;
-#if defined(USE_LIBUV_RWLOCK)
-  uv_rwlock_t                  *partitions;
-  prwlock_type_t               *lock_type_held;
-#elif defined(USE_ATOMICS) 
-  _Atomic int32_t              *partitions;
-  prwlock_type_t               *lock_type_held;
-#else /* pthreads */
-  pthread_rwlock_t             *partitions;
-#endif /* USE_LIBUV_RWLOCK */
+  partitioned_rwlock_cell_t    *cells;
 };
 
 /* ========================================================================= */
@@ -106,21 +118,28 @@ partitioned_rwlock_init (
   partitioned_rwlock_t        **rwlock,
   size_t                        partition_count
 ) {
-  partitioned_rwlock_t *newlock = calloc(1, sizeof(*newlock));
+  partitioned_rwlock_t *newlock = NULL;
+  if (posix_memalign((void *) &newlock, CACHE_LINE_SIZE, sizeof(*newlock))) {
+    printf("Failed to allocate new lock structure!\n");
+    return -1;
+  }
+
   newlock->partition_count = partition_count;
-  newlock->partitions = calloc(partition_count, sizeof(*newlock->partitions));
-#if defined(USE_LIBUV_RWLOCK) || defined(USE_ATOMICS)
-  newlock->lock_type_held = calloc(partition_count,
-    sizeof(*newlock->lock_type_held));
-#endif /* USE_LIBUV_RWLOCK */
+  if (posix_memalign((void **) &newlock->cells, CACHE_LINE_SIZE,
+    (partition_count * sizeof(*newlock->cells)))) {
+    printf("Failed to allocate %zd cells!\n", partition_count);
+  }
+
   for (size_t ii = 0; ii < partition_count; ++ii) {
     int rc = 0;
 #if defined(USE_LIBUV_RWLOCK)
-    rc = uv_rwlock_init(&(newlock->partitions[ii]));
+    newlock->cells[ii].lock_type_held = PRWLOCK_TYPE_NONE;
+    rc = uv_rwlock_init(&(newlock->cells[ii].rwlock));
 #elif defined(USE_ATOMICS) 
-    newlock->partitions[ii] = 0;
+    newlock->cells[ii].lock_type_held = PRWLOCK_TYPE_NONE;
+    newlock->cells[ii].rwlock = 0;
 #else
-    rc = pthread_rwlock_init(&(newlock->partitions[ii]), NULL);
+    rc = pthread_rwlock_init(&(newlock->cells[ii].rwlock), NULL);
 #endif /* USE_LIBUV_RWLOCK */
     if (0 != rc) {
       printf("init = %d\n", rc);
@@ -138,17 +157,17 @@ partitioned_rwlock_destroy (
 ) {
   for (size_t ii = 0; ii < rwlock->partition_count; ++ii) {
 #if defined(USE_LIBUV_RWLOCK)
-    uv_rwlock_destroy(&(rwlock->partitions[ii]));
+    uv_rwlock_destroy(&(rwlock->cells[ii].rwlock));
 #elif defined(USE_ATOMICS) 
-    rwlock->partitions[ii] = 0;
+    rwlock->cells[ii].rwlock = 0;
 #else
-    int rc = pthread_rwlock_destroy(&(rwlock->partitions[ii]));
+    int rc = pthread_rwlock_destroy(&(rwlock->cells[ii].rwlock));
     if (0 != rc) {
       printf("init = %d\n", rc);
     }
 #endif /* USE_LIBUV_RWLOCK */
   }
-  free(rwlock->partitions);
+  free(rwlock->cells);
   free(rwlock);
   return 0;
 } /* partitioned_rwlock_destroy() */
@@ -173,27 +192,27 @@ partitioned_rwlock_rdlock (
   assert(partition < rwlock->partition_count);
 
 #if defined(USE_LIBUV_RWLOCK)
-  uv_rwlock_rdlock(&(rwlock->partitions[partition]));
-  rwlock->lock_type_held[partition] = PRWLOCK_TYPE_READ;
+  uv_rwlock_rdlock(&(rwlock->cells[partition].rwlock));
+  rwlock->cells[partition].lock_type_held = PRWLOCK_TYPE_READ;
   return 0;
 #elif defined(USE_ATOMICS) 
   while (1) {
     int32_t val; 
     do {
-      val = atomic_load_explicit(&rwlock->partitions[partition],
+      val = atomic_load_explicit(&rwlock->cells[partition].rwlock,
         memory_order_relaxed);
       if (0 > val) {
         continue;
       }
     } while (!atomic_compare_exchange_weak_explicit(
-      &rwlock->partitions[partition], &val, (val + 1), memory_order_acquire,
+      &rwlock->cells[partition].rwlock, &val, (val + 1), memory_order_acquire,
       memory_order_relaxed));
     break;
   }
-  rwlock->lock_type_held[partition] = PRWLOCK_TYPE_READ;
+  rwlock->cells[partition].lock_type_held = PRWLOCK_TYPE_READ;
   return 0;
 #else
-  return pthread_rwlock_rdlock(&(rwlock->partitions[partition]));
+  return pthread_rwlock_rdlock(&(rwlock->cells[partition].rwlock));
 #endif /* USE_LIBUV_RWLOCK */
 } /* partitioned_rwlock_rdlock() */
 
@@ -208,13 +227,13 @@ partitioned_rwlock_tryrdlock (
   assert(partition < rwlock->partition_count);
 
 #if defined(USE_LIBUV_RWLOCK)
-  int rc = uv_rwlock_tryrdlock(&(rwlock->partitions[partition]));
+  int rc = uv_rwlock_tryrdlock(&(rwlock->cells[partition].rwlock));
   if (0 == rc) {
-    rwlock->lock_type_held[partition] = PRWLOCK_TYPE_READ;
+    rwlock->cells[partition].lock_type_held = PRWLOCK_TYPE_READ;
   }
   return rc;
 #elif defined(USE_ATOMICS) 
-  int32_t val = atomic_load_explicit(&rwlock->partitions[partition],
+  int32_t val = atomic_load_explicit(&rwlock->cells[partition].rwlock,
     memory_order_relaxed);
   if (0 > val) {
     return 1;
@@ -222,7 +241,7 @@ partitioned_rwlock_tryrdlock (
     return partitioned_rwlock_rdlock(rwlock, partition);
   }
 #else
-  return pthread_rwlock_tryrdlock(&(rwlock->partitions[partition]));
+  return pthread_rwlock_tryrdlock(&(rwlock->cells[partition].rwlock));
 #endif /* USE_LIBUV_RWLOCK */
 } /* partitioned_rwlock_tryrdlock() */
 
@@ -237,13 +256,13 @@ partitioned_rwlock_trywrlock (
   assert(partition < rwlock->partition_count);
 
 #if defined(USE_LIBUV_RWLOCK)
-  int rc = uv_rwlock_trywrlock(&(rwlock->partitions[partition]));
+  int rc = uv_rwlock_trywrlock(&(rwlock->cells[partition].rwlock));
   if (0 == rc) {
-    rwlock->lock_type_held[partition] = PRWLOCK_TYPE_WRITE;
+    rwlock->cells[partition].lock_type_held = PRWLOCK_TYPE_WRITE;
   }
   return rc;
 #elif defined(USE_ATOMICS) 
-  int32_t val = atomic_load_explicit(&rwlock->partitions[partition],
+  int32_t val = atomic_load_explicit(&rwlock->cells[partition].rwlock,
     memory_order_relaxed);
   if (0 == val) {
     return partitioned_rwlock_wrlock(rwlock, partition);
@@ -251,7 +270,7 @@ partitioned_rwlock_trywrlock (
     return 1;
   }
 #else
-  return pthread_rwlock_trywrlock(&rwlock->partitions[partition]);
+  return pthread_rwlock_trywrlock(&rwlock->cells[partition].rwlock);
 #endif /* USE_LIBUV_RWLOCK */
 } /* partitioned_rwlock_trywrlock() */
 
@@ -266,29 +285,29 @@ partitioned_rwlock_wrlock (
   assert(partition < rwlock->partition_count);
 
 #if defined(USE_LIBUV_RWLOCK)
-  uv_rwlock_wrlock(&(rwlock->partitions[partition]));
-  rwlock->lock_type_held[partition] = PRWLOCK_TYPE_WRITE;
+  uv_rwlock_wrlock(&(rwlock->cells[partition].rwlock));
+  rwlock->cells[partition].lock_type_held = PRWLOCK_TYPE_WRITE;
   return 0;
 #elif defined(USE_ATOMICS) 
   while (1) {
-    int32_t val = atomic_load_explicit(&rwlock->partitions[partition],
+    int32_t val = atomic_load_explicit(&rwlock->cells[partition].rwlock,
       memory_order_relaxed);
     while (!atomic_compare_exchange_weak_explicit(
-      &rwlock->partitions[partition], &val, (val | (1<<31)),
+      &rwlock->cells[partition].rwlock, &val, (val | (1<<31)),
       memory_order_acq_rel, memory_order_relaxed));
     val = INT32_MIN;
     while (atomic_compare_exchange_strong_explicit(
-      &rwlock->partitions[partition], &val, -1, memory_order_acquire,
+      &rwlock->cells[partition].rwlock, &val, -1, memory_order_acquire,
       memory_order_relaxed)) {
       val = INT32_MIN;
       asm("nop");
     }
     break;
   }
-  rwlock->lock_type_held[partition] = PRWLOCK_TYPE_WRITE;
+  rwlock->cells[partition].lock_type_held = PRWLOCK_TYPE_WRITE;
   return 0;
 #else
-  return pthread_rwlock_wrlock(&rwlock->partitions[partition]);
+  return pthread_rwlock_wrlock(&rwlock->cells[partition].rwlock);
 #endif /* USE_LIBUV_RWLOCK */
 } /* partitioned_rwlock_wrlock() */
 
@@ -303,23 +322,23 @@ partitioned_rwlock_unlock (
   assert(partition < rwlock->partition_count);
 
 #if defined(USE_LIBUV_RWLOCK)
-  if (PRWLOCK_TYPE_READ == rwlock->lock_type_held[partition]) {
-    uv_rwlock_rdunlock(&rwlock->partitions[partition]);
-  } else if (PRWLOCK_TYPE_WRITE == rwlock->lock_type_held[partition]) {
-    uv_rwlock_wrunlock(&rwlock->partitions[partition]);
+  if (PRWLOCK_TYPE_READ == rwlock->cells[partition].lock_type_held) {
+    uv_rwlock_rdunlock(&rwlock->cells[partition].rwlock);
+  } else if (PRWLOCK_TYPE_WRITE == rwlock->cells[partition].lock_type_held) {
+    uv_rwlock_wrunlock(&rwlock->cells[partition].rwlock);
   }
   return 0;
 #elif defined(USE_ATOMICS) 
-  if (PRWLOCK_TYPE_READ == rwlock->lock_type_held[partition]) {
-    atomic_fetch_sub_explicit(&rwlock->partitions[partition], 1,
+  if (PRWLOCK_TYPE_READ == rwlock->cells[partition].lock_type_held) {
+    atomic_fetch_sub_explicit(&rwlock->cells[partition].rwlock, 1,
       memory_order_release);
-  } else if (PRWLOCK_TYPE_WRITE == rwlock->lock_type_held[partition]) {
-    atomic_store_explicit(&rwlock->partitions[partition], 0,
+  } else if (PRWLOCK_TYPE_WRITE == rwlock->cells[partition].lock_type_held) {
+    atomic_store_explicit(&rwlock->cells[partition].rwlock, 0,
       memory_order_release);
   }
   return 0;
 #else
-  return pthread_rwlock_unlock(&rwlock->partitions[partition]);
+  return pthread_rwlock_unlock(&rwlock->cells[partition].rwlock);
 #endif /* USE_LIBUV_RWLOCK */
 } /* partitioned_rwlock_unlock() */
 
